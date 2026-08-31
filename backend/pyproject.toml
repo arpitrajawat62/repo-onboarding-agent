@@ -6,6 +6,7 @@ dependencies = [
     "fastapi>=0.112.0",
     "uvicorn[standard]>=0.30.0",
     "pydantic-settings>=2.4.0",
+    "GitPython>=3.1.43",
 ]
 
 [build-system]
