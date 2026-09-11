@@ -16,3 +16,4 @@ class RepoStatusResponse(BaseModel):
     repo_url: str
     status: str
     error: str | None = None
+    chunk_count: int = 0
