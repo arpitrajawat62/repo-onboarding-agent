@@ -7,6 +7,7 @@ from app.api.schemas import CreateRepoRequest, CreateRepoResponse, RepoStatusRes
 
 from app.ingestion.cloner import clone_repo, WORKSPACE_DIR
 from app.ingestion.parser import parse_repo
+from app.ingestion.indexer import index_chunks
 
 
 router = APIRouter(prefix="/repos", tags=["repos"])
@@ -26,6 +27,8 @@ def process_repository_task(repo_id: str, repo_url: str):
 
 
         update_repo_status(repo_id, "indexing")
+        index_chunks(repo_id, chunks)
+        
         update_repo_status(repo_id, "ready")
 
     except Exception as e:
