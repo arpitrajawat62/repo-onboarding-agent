@@ -22,8 +22,8 @@ def ensure_collection() -> None:
     if COLLECTION_NAME not in existing:
         client.create_collection(
            collection_name=COLLECTION_NAME,
-           vector_config=qmodels.VectorParams(
-                SIZE=VECTOR_SIZE,
+           vectors_config=qmodels.VectorParams(
+                size=VECTOR_SIZE,
                 distance = qmodels.Distance.COSINE,
            ),
         )
