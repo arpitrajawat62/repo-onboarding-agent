@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # App
     app_name: str = "Repo Onboarding Agent"
@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
 
     # Grok
-    grok_api_key: str = ""
-    grok_model: str = "llama-3.3-70b-versatile"
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
 
 
-Settings = Settings()
+settings = Settings()
