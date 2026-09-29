@@ -2,7 +2,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
 
-from app.config import Settings
+from app.config import settings
 
 
 
@@ -12,7 +12,7 @@ VECTOR_SIZE = 384
 
 
 def get_client() -> QdrantClient:
-    return QdrantClient(url=Settings.qdrant_url)
+    return QdrantClient(url=settings.qdrant_url)
 
 
 def ensure_collection() -> None:
@@ -33,3 +33,17 @@ def upsert_chunks(points: list[qmodels.PointStruct]) -> None:
     ensure_collection()
     client.upsert(collection_name=COLLECTION_NAME, points=points)
     
+
+def search_chunks(repo_id: str, query_vector: list[float], top_k: int = 5) -> list[dict]:
+
+    client = get_client()
+    results = client.query_points(
+        collection_name=COLLECTION_NAME,
+        query=query_vector,
+        query_filter=qmodels.Filter(
+            must=[qmodels.FieldCondition(key="repo_id", match=qmodels.MatchValue(value=repo_id))]
+        ),
+        limit = top_k
+    ).points
+
+    return [point.payload for point in results]
