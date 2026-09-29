@@ -11,6 +11,10 @@ from app.vectorstore import upsert_chunks
 _model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
+def embed_text(text: str) -> list[float]:
+    return _model.encode([text])[0].tolist()
+
+
 def index_chunks(repo_id: str, chunks: List[CodeChunk]) -> int:
 
     if not chunks:
