@@ -14,7 +14,7 @@ class AgentState(TypedDict):
     findings: List[Finding]
     steps_taken: int
 
-    next_Action: Dict[str, Any]
+    next_action: Dict[str, Any]
     confident_enough: bool
 
     final_answer: str
