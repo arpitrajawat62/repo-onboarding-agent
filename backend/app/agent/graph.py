@@ -1,5 +1,5 @@
 import json 
-from groq import Groq
+from groq import Groq, BadRequestError
 
 from app.config import settings
 from app.agent.prompts import (
@@ -18,6 +18,32 @@ from langgraph.graph import StateGraph, END
 
 _groq_client = Groq(api_key=settings.groq_api_key)
 
+def _ask_for_json(system_prompt: str, user_prompt: str, retries: int = 3) -> dict:
+    """
+    Calls the LLM expecting a JSON object back. If the model returns
+    nothing or invalid JSON, tries again. Returns {} if every attempt fails.
+    """
+    for _ in range(retries):
+        try:
+            response = _groq_client.chat.completions.create(
+                model=settings.groq_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+            )
+            raw_text = (response.choices[0].message.content or "").strip()
+            if raw_text:
+                parsed = json.loads(raw_text)
+                if isinstance(parsed, dict):
+                    return parsed
+        except (BadRequestError, json.JSONDecodeError):
+            continue
+    return {}
+
+
+
 def explorer_node(state: AgentState) -> AgentState:
 
     action = state["next_action"] 
@@ -31,11 +57,13 @@ def explorer_node(state: AgentState) -> AgentState:
 
     elif tool_name == "read_file":
         result = read_file(repo_id, arg)
-        result_summary = result[:300]
+        result_summary = result[:1500]
 
     elif tool_name == "search_code":
         result = search_code(repo_id, arg)
-        result_summary = f"Found in: {[r["file_path"] for r in result]}"
+        result_summary = result_summary = "Matches:\n" + "\n".join(
+               f"  {r['file_path']}: {r['content'][:300]}" for r in result[:3]
+        )
 
     else:
         result_summary = f"(unknown tool: {tool_name})"
@@ -59,12 +87,21 @@ def planner_node(state: AgentState) -> AgentState:
     """
     user_prompt = build_planner_user_prompt(state["question"], state["findings"])
 
+    next_action = _ask_for_json(PLANNER_SYSTEM_PROMPT, user_prompt)
+
+    if not next_action.get("tool"):
+        next_action = {"tool": "list_dir", "arg": "."}
+
+    state["next_action"] = next_action
+    return state
+
     response = _groq_client.chat.completions.create(
         model=settings.groq_model,
         messages=[
             {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
+        response_format={"type": "json_object"},
     )
 
     raw_text = (response.choices[0].message.content or "").strip()
@@ -92,24 +129,15 @@ def confidence_node(state: AgentState) -> AgentState:
         state["confident_enough"] = True
         return state
 
-    user_prompt = build_confidence_user_prompt(state["question"], state["findings"])
-
-
-    response = _groq_client.chat.completions.create(
-        model=settings.groq_model,
-        messages=[
-            {"role": "system", "content": CONFIDENCE_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-    )
-
-    raw_text = (response.choices[0].message.content or "").strip()
-
-    if not raw_text:
+    has_read_a_file = any(f["action"] == "read_file" for f in state["findings"])
+    if not has_read_a_file:
         state["confident_enough"] = False
-    else:
-        result = json.loads(raw_text)
-        state["confident_enough"] = result.get("confident", False)
+        return state
+
+
+    user_prompt = build_confidence_user_prompt(state["question"], state["findings"])
+    result = _ask_for_json(CONFIDENCE_SYSTEM_PROMPT, user_prompt)
+    state["confident_enough"] = result.get("confident", False)
 
     return state
 
