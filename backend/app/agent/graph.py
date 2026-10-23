@@ -41,7 +41,7 @@ def _ask_for_json(system_prompt: str, user_prompt: str, name: str = "llm", retri
                     return parsed
         except (BadRequestError, json.JSONDecodeError):
             continue
-    print("WARNING: no usable JSON from the LLM in '{name}' after retries")
+    print(f"WARNING: no usable JSON from the LLM in '{name}' after retries")
 
     return {}
 
