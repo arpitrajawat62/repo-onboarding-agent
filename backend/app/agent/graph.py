@@ -1,4 +1,5 @@
 import json 
+import re
 from groq import Groq, BadRequestError
 
 from app.config import settings
@@ -18,12 +19,41 @@ from langgraph.graph import StateGraph, END
 
 _groq_client = Groq(api_key=settings.groq_api_key)
 
-def _ask_for_json(system_prompt: str, user_prompt: str, name: str = "llm", retries: int = 3) -> dict:
+
+def _coverage_note(findings: list) -> str:
+    """Lists files the agent only read part of, using the 'file continues' markers."""
+    partial = {}  
+
+    for f in findings:
+        if f["action"] != "read_file":
+            continue
+        path = f["target"].split(" (from character")[0]
+        match = re.search(r"showing characters (\d+)-(\d+) of (\d+)", f["result_summary"])
+        if match:
+            partial[path] = (int(match.group(2)), int(match.group(3)))
+        else:
+            partial.pop(path, None)  
+
+    if not partial:
+        return ""
+
+    lines = [
+        f"- {path}: read {end} of {total} characters"
+        for path, (end, total) in partial.items()
+    ]
+    return (
+        "\n\n---\nCoverage note: the agent read only part of these files, so anything "
+        "said about their unread parts is not based on the code it saw:\n"
+        + "\n".join(lines)
+    )
+
+
+def _ask_for_json(system_prompt: str, user_prompt: str, name: str = "llm", retries: int = 5) -> dict:
     """
-    Calls the LLM expecting a JSON object back. If the model returns
-    nothing or invalid JSON, tries again. Returns {} if every attempt fails.
+    Calls the LLM expecting a JSON object back. Retries on empty or
+    invalid replies. Returns {} if every attempt fails.
     """
-    for _ in range(retries):
+    for attempt in range(1, retries + 1):
         try:
             response = _groq_client.chat.completions.create(
                 model=settings.groq_model,
@@ -35,14 +65,20 @@ def _ask_for_json(system_prompt: str, user_prompt: str, name: str = "llm", retri
                 reasoning_effort="low",
             )
             raw_text = (response.choices[0].message.content or "").strip()
-            if raw_text:
-                parsed = json.loads(raw_text)
-                if isinstance(parsed, dict):
-                    return parsed
-        except (BadRequestError, json.JSONDecodeError):
-            continue
-    print(f"WARNING: no usable JSON from the LLM in '{name}' after retries")
+            if not raw_text:
+                print(f"  [{name}] attempt {attempt}: empty reply")
+                continue
+            parsed = json.loads(raw_text)
+            if isinstance(parsed, dict):
+                return parsed
+        
+        except (BadRequestError, json.JSONDecodeError) as e:
+            detail = getattr(e, "body", None)
+            if isinstance(detail, dict) and "failed_generation" in detail:
+                detail = f"failed_generation={detail['failed_generation']!r}"
+            print(f"  [{name}] attempt {attempt} failed: {str(detail or e)[:500]}")
 
+    print(f"WARNING: no usable JSON from the LLM in '{name}' after retries")
     return {}
 
 
@@ -54,13 +90,23 @@ def explorer_node(state: AgentState) -> AgentState:
     arg = action.get("arg", "")
     repo_id = state["repo_id"]
 
+
+    try:
+        start = int(action.get("start", 0))
+    except (TypeError, ValueError):
+        start = 0
+
+    target = arg
+
     if tool_name == "list_dir":
         result = list_dir(repo_id, arg)
         result_summary = f"Contents: {result}"
 
     elif tool_name == "read_file":
-        result = read_file(repo_id, arg)
-        result_summary = result[:4000]
+        result_summary = read_file(repo_id, arg, start=start)
+        if start:
+            target = f"{arg} (from character {start})"
+    
 
     elif tool_name == "search_code":
         result = search_code(repo_id, arg)
@@ -74,7 +120,7 @@ def explorer_node(state: AgentState) -> AgentState:
 
     finding: Finding = {
         "action": tool_name,
-        "target": arg,
+        "target": target,
         "result_summary": result_summary,
     }
 
@@ -141,7 +187,8 @@ def synthesizer_node(state: AgentState) -> AgentState:
         ],
     )
 
-    state["final_answer"] = (response.choices[0].message.content or "").strip()
+    answer = (response.choices[0].message.content or "").strip()
+    state["final_answer"] = answer + _coverage_note(state["findings"])
     return state
 
 
