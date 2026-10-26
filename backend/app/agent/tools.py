@@ -14,12 +14,22 @@ def list_dir(repo_id: str, sub_path: str = ".") -> list[str]:
     return sorted(p.name for p in target.iterdir())
 
 
-def read_file(repo_id: str, file_path: str, max_chars: int = 4000) -> str:
+def read_file(repo_id: str, file_path: str, start: int = 0, max_chars: int = 4000) -> str:
 
     target = WORKSPACE_DIR / repo_id / file_path
     if not target.exists():
         return f"(file not found: {file_path})"
-    return target.read_text(errors="ignore")[:max_chars]
+
+    text = target.read_text(errors="ignore")
+    end = start + max_chars
+    window = text[start:end]
+
+    if end < len(text):
+        window += (
+            f"\n[... file continues: showing characters {start}-{end} of {len(text)}. "
+            f"To read more, use read_file with start={end} ...]"
+        )
+    return window
 
 
 def search_code(repo_id: str, query: str, top_k: int = 5) -> list[dict]:
