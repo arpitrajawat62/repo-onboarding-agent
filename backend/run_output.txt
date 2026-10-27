@@ -1,0 +1,493 @@
+**Overview**
+
+Argument parsing in this repository is implemented by the **`_OptionParser`** class in **`src/click/parser.py`**.  
+The parser works in three stages:
+
+1. **Registration** – options and positional arguments are added to the parser.  
+2. **Option processing** – the raw command‑line strings are examined for option prefixes and dispatched to the appropriate `_Option` objects.  
+3. **Argument processing** – the remaining strings are unpacked according to the `nargs` specifications of the registered `_Argument` objects.
+
+The result of `parse_args` is a tuple **`(values, args, order)`** where:
+
+* `values` – a dict mapping destination names to the parsed values,  
+* `args` – a list of leftover arguments that were not consumed,  
+* `order` – a list of the original `CoreParameter` objects in the order they appeared on the command line.
+
+All of the above behaviour is defined in **`src/click/parser.py`** and is described in detail below.
+
+---
+
+### 1. Registration of options and arguments
+
+* **`_OptionParser.add_option`**  
+  * Normalizes each option string with `_normalize_opt` (which may apply a token‑normalisation function from the `Context`) [src/click/parser.py].  
+  * Creates an `_Option` instance that stores the underlying `CoreOption`, the list of option strings, the destination name, the action (`store`, `store_const`, `append`, `append_const`, `count`), the number of values it expects (`nargs`), and an optional constant value (`const`) [src/click/parser.py].  
+  * Updates the parser’s internal lookup tables (`_short_opt`, `_long_opt`) and the set of recognized prefixes (`_opt_prefixes`) based on the option’s prefixes (e.g., `-` or `--`) [src/click/parser.py].
+
+* **`_OptionParser.add_argument`**  
+  * Appends an `_Argument` object that records the underlying `CoreArgument`, its destination name, and its `nargs` (how many values it consumes) [src/click/parser.py].
+
+---
+
+### 2. Parsing entry point – `parse_args`
+
+* A fresh **`_ParsingState`** object is created with the raw argument list (`args`). It holds:
+  * `opts` – a dict that will receive the parsed option/argument values,  
+  * `largs` – a list for “left‑over” positional arguments collected before the first non‑option (when interspersed arguments are allowed),  
+  * `rargs` – the remaining arguments to be processed,  
+  * `order` – the order list of `CoreParameter` objects [src/click/parser.py].
+
+* The parser then calls two internal methods, in this order:
+  1. **`_process_args_for_options`** – walks through `state.rargs` and extracts options.  
+  2. **`_process_args_for_args`** – unpacks the remaining strings into positional arguments based on the `nargs` of each registered `_Argument` [src/click/parser.py].
+
+If a `UsageError` is raised during processing and the associated `Context` is not in *resilient parsing* mode, the error is propagated; otherwise it is swallowed (allowing the caller to continue) [src/click/parser.py].
+
+---
+
+### 3. Option processing – `_process_args_for_options`
+
+* While there are still strings in `state.rargs`:
+  * If the string is exactly `"--"` the method returns, treating everything after it as a literal argument (no further option parsing) [src/click/parser.py].
+  * If the string starts with a known option prefix (`-` or `--`) and has length > 1, `_process_opts` is invoked to handle the specific option (the implementation of `_process_opts` is later in the file, but its purpose is to locate the matching `_Option` object and call its `process` method) [src/click/parser.py].
+  * If the parser’s `allow_interspersed_args` flag is **True** (default, inherited from the `Context`), the string is added to `state.largs` (treated as a positional argument).  
+  * Otherwise the string is re‑inserted at the front of `state.rargs` and option processing stops, forcing the remaining strings to be treated as positional arguments only.  
+  * The `allow_interspersed_args` flag is set from the `Context` during parser construction, and can be overridden per‑command [src/click/parser.py].
+
+* The parser also respects `ignore_unknown_options` (from the `Context`): when `True`, unknown option strings are not turned into errors but are instead shifted into the leftover argument list. This flag is stored on the parser instance at construction time [src/click/parser.py].
+
+---
+
+### 4. Argument processing – `_process_args_for_args`
+
+* The helper **`_unpack_args`** takes:
+  * the concatenated list `state.largs + state.rargs`, and  
+  * a list of `nargs` specifications (one per registered `_Argument`).  
+  * It walks through the `nargs` specifications, pulling the required number of strings from the argument deque.  
+  * A special `nargs` value of **`-1`** denotes a “wildcard” (star) argument that consumes the remainder of the list; only one such wildcard is allowed (otherwise a `TypeError` is raised) [src/click/parser.py].
+
+* Missing values are filled with the sentinel `UNSET`. When a wildcard is present, its position is recorded (`spos`) and later filled with the remaining arguments as a tuple; the rest of the arguments are reversed to preserve original order after the wildcard [src/click/parser.py].
+
+* After unpacking, each `_Argument`’s `process` method is called with its slice of values:
+  * If the argument expects more than one value (`nargs > 1`), the method checks for unset placeholders and raises `BadArgumentUsage` if the number of provided values does not match the expectation [src/click/parser.py].
+  * An empty tuple is interpreted as `UNSET`.  
+  * The parsed value is stored in `state.opts` under the argument’s destination name, and the original `CoreArgument` object is appended to `state.order` [src/click/parser.py].
+
+* Finally, `state.largs` is set to any leftover arguments returned by `_unpack_args`, and `state.rargs` is cleared, completing the parsing step.
+
+---
+
+### 5. Option handling – `_Option.process`
+
+* Depending on the option’s `action`:
+  * **`store`** – the value is stored directly under `dest`.  
+  * **`store_const`** – the constant (`const`) is stored.  
+  * **`append`** – the value is appended to a list (creating the list if necessary).  
+  * **`append_const`** – the constant is appended.  
+  * **`count`** – the counter is incremented (starting from 0).  
+  * After handling the value, the original `CoreOption` object is added to `state.order` to preserve command‑line ordering [src/click/parser.py].
+
+The `takes_value` property indicates whether the option expects a value (`store` or `append`) [src/click/parser.py].
+
+---
+
+### 6. Helper utilities
+
+* **`_split_opt`** separates a raw option string into its prefix (`-`, `--`, etc.) and the remainder. It treats a double‑character prefix (e.g., `--`) specially and otherwise returns the first character as the prefix [src/click/parser.py].
+
+* **`_normalize_opt`** applies a token‑normalisation function from the `Context` (if present) to the option name, after splitting it into prefix and body [src/click/parser.py].
+
+* **`_unpack_args`** (described above) implements the low‑level logic for consuming arguments according to `nargs`, handling wildcard (`-1`) specifications, and inserting `UNSET` for missing values.
+
+---
+
+### 7. Interaction with `Context`
+
+* When an `_OptionParser` is instantiated, it copies the following flags from the supplied `Context` (if any):
+  * `allow_interspersed_args` – controls whether options may appear after positional arguments.  
+  * `ignore_unknown_options` – controls whether unknown options raise an error or are passed through as literal arguments.  
+  * The parser also inherits the context’s `token_normalize_func` for option name normalisation [src/click/parser.py].
+
+---
+
+### Summary Flow
+
+1. **Setup** – Commands call `add_option` and `add_argument` to describe the CLI surface.  
+2. **Parse** – `parse_args(raw_argv)` creates a `_ParsingState`, runs `_process_args_for_options` (option detection, handling, unknown‑option policy), then `_process_args_for_args` (positional unpacking with `nargs`).  
+3. **Result** – Returns a dictionary of parsed values, any remaining raw arguments, and the ordered list of `CoreParameter` objects reflecting the original command‑line order.
+
+All of these mechanics are defined in **`src/click/parser.py`**; no other files are needed to understand the core argument‑parsing logic.  
+
+---  
+
+**Not verified**
+
+* Any code beyond what is shown in the excerpts (e.g., the full implementation of `_process_opts`, error‑message formatting, or integration with the higher‑level `click.Command` class) was not examined, so details of those parts are not included.  
+* The interaction with other modules such as `core.py` or `globals.py` is not described here because their contents were not part of the provided findings.
+
+---
+Coverage note: the agent read only part of these files, so anything said about their unread parts is not based on the code it saw:
+- src/click/parser.py: read 12000 of 19052 characters
+
+=== EVERYTHING THE AGENT SAW ===
+
+--- list_dir(.) ---
+Contents: ['.devcontainer', '.editorconfig', '.git', '.github', '.gitignore', '.pre-commit-config.yaml', '.readthedocs.yaml', 'CHANGES.md', 'LICENSE.txt', 'README.md', 'docs', 'examples', 'pyproject.toml', 'src', 'tests', 'uv.lock']
+
+--- list_dir(src) ---
+Contents: ['click']
+
+--- list_dir(src/click) ---
+Contents: ['__init__.py', '_compat.py', '_termui_impl.py', '_textwrap.py', '_utils.py', '_winconsole.py', 'core.py', 'decorators.py', 'exceptions.py', 'formatting.py', 'globals.py', 'parser.py', 'py.typed', 'shell_completion.py', 'termui.py', 'testing.py', 'types.py', 'utils.py']
+
+--- read_file(src/click/parser.py) ---
+"""
+This module started out as largely a copy paste from the stdlib's
+optparse module with the features removed that we do not need from
+optparse because we implement them in Click on a higher level (for
+instance type handling, help formatting and a lot more).
+
+The plan is to remove more and more from here over time.
+
+The reason this is a different module and not optparse from the stdlib
+is that there are differences in 2.x and 3.x about the error messages
+generated and optparse in the stdlib uses gettext for no good reason
+and might cause us issues.
+
+Click uses parts of optparse written by Gregory P. Ward and maintained
+by the Python Software Foundation. This is limited to code in parser.py.
+
+Copyright 2001-2006 Gregory P. Ward. All rights reserved.
+Copyright 2002-2006 Python Software Foundation. All rights reserved.
+"""
+
+# This code uses parts of optparse written by Gregory P. Ward and
+# maintained by the Python Software Foundation.
+# Copyright 2001-2006 Gregory P. Ward
+# Copyright 2002-2006 Python Software Foundation
+from __future__ import annotations
+
+import collections.abc as cabc
+import typing as t
+from collections import deque
+from gettext import gettext as _
+from gettext import ngettext
+
+from ._utils import FLAG_NEEDS_VALUE
+from ._utils import UNSET
+from .exceptions import BadArgumentUsage
+from .exceptions import BadOptionUsage
+from .exceptions import NoSuchOption
+from .exceptions import UsageError
+
+if t.TYPE_CHECKING:
+    from ._utils import T_FLAG_NEEDS_VALUE
+    from ._utils import T_UNSET
+    from .core import Argument as CoreArgument
+    from .core import Context
+    from .core import Option as CoreOption
+    from .core import Parameter as CoreParameter
+
+V = t.TypeVar("V")
+
+
+def _unpack_args(
+    args: cabc.Sequence[str], nargs_spec: cabc.Sequence[int]
+) -> tuple[cabc.Sequence[str | cabc.Sequence[str | T_UNSET] | T_UNSET], list[str]]:
+    """Given an iterable of arguments and an iterable of nargs specifications,
+    it returns a tuple with all the unpacked arguments at the first index
+    and all remaining arguments as the second.
+
+    The nargs specification is the number of arguments that should be consumed
+    or `-1` to indicate that this position should eat up all the remainders.
+
+    Missing items are filled with ``UNSET``.
+    """
+    args = deque(args)
+    nargs_spec = deque(nargs_spec)
+    rv: list[str | tuple[str | T_UNSET, ...] | T_UNSET] = []
+    spos: int | None = None
+
+    def _fetch(c: deque[str]) -> str | T_UNSET:
+        try:
+            if spos is None:
+                return c.popleft()
+            else:
+                return c.pop()
+        except IndexError:
+            return UNSET
+
+    while nargs_spec:
+        if spos is None:
+            nargs = nargs_spec.popleft()
+        else:
+            nargs = nargs_spec.pop()
+
+        if nargs == 1:
+            rv.append(_fetch(args))
+        elif nargs > 1:
+            x: list[str | T_UNSET] = [_fetch(args) for _ in range(nargs)]
+
+            # If we're reversed, we're pulling in the arguments in reverse,
+            # so we need to turn them around.
+            if spos is not None:
+                x.reverse()
+
+            rv.append(tuple(x))
+        elif nargs < 0:
+            if spos is not None:
+                raise TypeError("Cannot have two nargs < 0")
+
+            spos = len(rv)
+            rv.append(UNSET)
+
+    # spos is the position of the wildcard (star).  If it's not `None`,
+    # we fill it with the remainder.
+    if spos is not None:
+        rv[spos] = tuple(args)
+        args = []
+        rv[spos + 1 :] = reversed(rv[spos + 1 :])
+
+    return tuple(rv), list(args)
+
+
+def _split_opt(opt: str) -> tuple[str, str]:
+    first = opt[:1]
+    if first.isalnum():
+        return "", opt
+    if opt[1:2] == first:
+        return opt[:2], opt[2:]
+    return first, opt[1:]
+
+
+def _normalize_opt(opt: str, ctx: Context | None) -> str:
+    if ctx is None or ctx.token_normalize_func is None:
+        return opt
+    prefix, opt = _split_opt(opt)
+    return
+[... file continues: showing characters 0-4000 of 19052. To read more, use read_file with start=4000 ...]
+
+--- read_file(src/click/parser.py (from character 4000)) ---
+ f"{prefix}{ctx.token_normalize_func(opt)}"
+
+
+class _Option:
+    def __init__(
+        self,
+        obj: CoreOption,
+        opts: cabc.Sequence[str],
+        dest: str | None,
+        action: str | None = None,
+        nargs: int = 1,
+        const: t.Any | None = None,
+    ):
+        self._short_opts = []
+        self._long_opts = []
+        self.prefixes: set[str] = set()
+
+        for opt in opts:
+            prefix, value = _split_opt(opt)
+            if not prefix:
+                raise ValueError(
+                    _("Invalid start character for option ({option})").format(
+                        option=opt
+                    )
+                )
+            self.prefixes.add(prefix[0])
+            if len(prefix) == 1 and len(value) == 1:
+                self._short_opts.append(opt)
+            else:
+                self._long_opts.append(opt)
+                self.prefixes.add(prefix)
+
+        if action is None:
+            action = "store"
+
+        self.dest = dest
+        self.action = action
+        self.nargs = nargs
+        self.const = const
+        self.obj = obj
+
+    @property
+    def takes_value(self) -> bool:
+        return self.action in ("store", "append")
+
+    def process(self, value: t.Any, state: _ParsingState) -> None:
+        if self.action == "store":
+            state.opts[self.dest] = value  # type: ignore
+        elif self.action == "store_const":
+            state.opts[self.dest] = self.const  # type: ignore
+        elif self.action == "append":
+            state.opts.setdefault(self.dest, []).append(value)  # type: ignore
+        elif self.action == "append_const":
+            state.opts.setdefault(self.dest, []).append(self.const)  # type: ignore
+        elif self.action == "count":
+            state.opts[self.dest] = state.opts.get(self.dest, 0) + 1  # type: ignore
+        else:
+            raise ValueError(f"unknown action '{self.action}'")
+        state.order.append(self.obj)
+
+
+class _Argument:
+    def __init__(self, obj: CoreArgument, dest: str | None, nargs: int = 1):
+        self.dest = dest
+        self.nargs = nargs
+        self.obj = obj
+
+    def process(
+        self,
+        value: str | cabc.Sequence[str | T_UNSET] | T_UNSET,
+        state: _ParsingState,
+    ) -> None:
+        if self.nargs > 1:
+            assert isinstance(value, cabc.Sequence)
+            holes = sum(x is UNSET for x in value)
+            if holes == len(value):
+                value = UNSET
+            elif holes != 0:
+                raise BadArgumentUsage(
+                    _("Argument {name!r} takes {nargs} values.").format(
+                        name=self.dest, nargs=self.nargs
+                    )
+                )
+
+        # We failed to collect any argument value so we consider the argument as unset.
+        if value == ():
+            value = UNSET
+
+        state.opts[self.dest] = value  # type: ignore
+        state.order.append(self.obj)
+
+
+class _ParsingState:
+    def __init__(self, rargs: list[str]) -> None:
+        self.opts: dict[str, t.Any] = {}
+        self.largs: list[str] = []
+        self.rargs = rargs
+        self.order: list[CoreParameter] = []
+
+
+class _OptionParser:
+    """The option parser is an internal class that is ultimately used to
+    parse options and arguments.  It's modelled after optparse and brings
+    a similar but vastly simplified API.  It should generally not be used
+    directly as the high level Click classes wrap it for you.
+
+    It's not nearly as extensible as optparse or argparse as it does not
+    implement features that are implemented on a higher level (such as
+    types or defaults).
+
+    :param ctx: optionally the :class:`~click.Context` where this parser
+                should go with.
+
+    .. deprecated:: 8.2
+        Will be removed in Click 9.0.
+    """
+
+    def __init__(self, ctx: Context | None = None) -> None:
+        #: The :class:`~click.Context` for this parser.  This might be
+        #: `None` for some advanced use cases.
+        self.ctx = ctx
+     
+[... file continues: showing characters 4000-8000 of 19052. To read more, use read_file with start=8000 ...]
+
+--- read_file(src/click/parser.py (from character 8000)) ---
+   #: This controls how the parser deals with interspersed arguments.
+        #: If this is set to `False`, the parser will stop on the first
+        #: non-option.  Click uses this to implement nested subcommands
+        #: safely.
+        self.allow_interspersed_args: bool = True
+        #: This tells the parser how to deal with unknown options.  By
+        #: default it will error out (which is sensible), but there is a
+        #: second mode where it will ignore it and continue processing
+        #: after shifting all the unknown options into the resulting args.
+        self.ignore_unknown_options: bool = False
+
+        if ctx is not None:
+            self.allow_interspersed_args = ctx.allow_interspersed_args
+            self.ignore_unknown_options = ctx.ignore_unknown_options
+
+        self._short_opt: dict[str, _Option] = {}
+        self._long_opt: dict[str, _Option] = {}
+        self._opt_prefixes = {"-", "--"}
+        self._args: list[_Argument] = []
+
+    def add_option(
+        self,
+        obj: CoreOption,
+        opts: cabc.Sequence[str],
+        dest: str | None,
+        action: str | None = None,
+        nargs: int = 1,
+        const: t.Any | None = None,
+    ) -> None:
+        """Adds a new option named `dest` to the parser.  The destination
+        is not inferred (unlike with optparse) and needs to be explicitly
+        provided.  Action can be any of ``store``, ``store_const``,
+        ``append``, ``append_const`` or ``count``.
+
+        The `obj` can be used to identify the option in the order list
+        that is returned from the parser.
+        """
+        opts = [_normalize_opt(opt, self.ctx) for opt in opts]
+        option = _Option(obj, opts, dest, action=action, nargs=nargs, const=const)
+        self._opt_prefixes.update(option.prefixes)
+        for opt in option._short_opts:
+            self._short_opt[opt] = option
+        for opt in option._long_opts:
+            self._long_opt[opt] = option
+
+    def add_argument(self, obj: CoreArgument, dest: str | None, nargs: int = 1) -> None:
+        """Adds a positional argument named `dest` to the parser.
+
+        The `obj` can be used to identify the option in the order list
+        that is returned from the parser.
+        """
+        self._args.append(_Argument(obj, dest=dest, nargs=nargs))
+
+    def parse_args(
+        self, args: list[str]
+    ) -> tuple[dict[str, t.Any], list[str], list[CoreParameter]]:
+        """Parses positional arguments and returns ``(values, args, order)``
+        for the parsed options and arguments as well as the leftover
+        arguments if there are any.  The order is a list of objects as they
+        appear on the command line.  If arguments appear multiple times they
+        will be memorized multiple times as well.
+        """
+        state = _ParsingState(args)
+        try:
+            self._process_args_for_options(state)
+            self._process_args_for_args(state)
+        except UsageError:
+            if self.ctx is None or not self.ctx.resilient_parsing:
+                raise
+        return state.opts, state.largs, state.order
+
+    def _process_args_for_args(self, state: _ParsingState) -> None:
+        pargs, args = _unpack_args(
+            state.largs + state.rargs, [x.nargs for x in self._args]
+        )
+
+        for idx, arg in enumerate(self._args):
+            arg.process(pargs[idx], state)
+
+        state.largs = args
+        state.rargs = []
+
+    def _process_args_for_options(self, state: _ParsingState) -> None:
+        while state.rargs:
+            arg = state.rargs.pop(0)
+            arglen = len(arg)
+            # Double dashes always handled explicitly regardless of what
+            # prefixes are valid.
+            if arg == "--":
+                return
+            elif arg[:1] in self._opt_prefixes and arglen > 1:
+                self._process_opts(arg, state)
+            elif self.allow_interspersed_args:
+                state.largs.append(arg)
+            else:
+                state.rargs.insert(0, arg
+[... file continues: showing characters 8000-12000 of 19052. To read more, use read_file with start=12000 ...]
+
