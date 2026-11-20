@@ -4,44 +4,128 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Repo Onboarding Agent</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main>
-    <h1>Repo Onboarding Agent</h1>
-    <p class="subtitle">Load a GitHub repository, then ask how it works. The agent explores the code and shows you everything it read.</p>
 
-    <section class="card">
-      <h2>1. Load a repository</h2>
-      <div class="row">
-        <input id="repo-url" type="text" placeholder="https://github.com/pallets/click">
-        <button id="load-btn">Load</button>
+  <header class="topbar">
+    <a class="brand" id="brand" href="#">RepoOnboard</a>
+    <div class="top-right">
+      <div id="repo-chip" class="chip" hidden><span class="dot"></span><span id="repo-name"></span></div>
+      <button id="change-btn" class="ghost" hidden>Change repo</button>
+      <button id="map-btn" class="ghost" hidden>Hide map</button>
+    </div>
+  </header>
+
+  <!-- step 1: choose a repository -->
+  <section id="landing" class="landing">
+    <h1>Understand any<br>codebase in <em>minutes</em></h1>
+    <p class="sub">Paste a GitHub repository, ask a question, and watch the agent explore folders, read files and search code to find the answer.</p>
+
+    <div class="repo-form">
+      <input id="repo-url" type="text" placeholder="https://github.com/owner/repo" spellcheck="false">
+      <button id="load-btn" class="primary">Load</button>
+    </div>
+    <p id="repo-status" class="status"></p>
+    
+    <div id="loader" class="loader" hidden>
+      <div class="loader-head">
+        <span class="spin"></span>
+        <span id="loader-title">Preparing your repository…</span>
+        <span id="loader-time" class="loader-time">0s</span>
       </div>
-      <p id="repo-status" class="status"></p>
-    </section>
+      <div class="bar"><div id="bar-fill" class="bar-fill"></div></div>
+      <ol id="stepper" class="stepper">
+        <li>Clone</li><li>Parse</li><li>Index</li>
+      </ol>
+      <p class="loader-note">Large repositories can take a few minutes.</p>
+    </div>
+    <button id="back-btn" class="ghost back" hidden>← Back to the project</button>
+  </section>
 
-    <section class="card">
-      <h2>2. Ask a question</h2>
-      <div class="row">
-        <input id="question" type="text" placeholder="How does argument parsing work?" disabled>
-        <button id="ask-btn" disabled>Ask</button>
+  <!-- step 2: the map on the left, the chat on the right -->
+  <div id="workspace" class="workspace stage-tree" hidden>
+
+    <aside id="map" class="map">
+      <div class="map-inner">
+        <div class="map-card tree-card">
+          <div class="map-head">
+            <span>Repository map <em id="map-meta"></em></span>
+            <span class="head-actions">
+              <button id="expand-btn" class="icon-btn">Collapse</button>
+              <button id="fit-btn" class="icon-btn">Fit</button>
+            </span>
+          </div>
+          <div id="graph-pane">
+            <svg id="graph"></svg>
+            <p id="graph-empty">Drawing the repository tree…</p>
+            <div id="pill" hidden></div>
+          </div>
+          <div id="legend">
+            <span><i style="background:#e7eaf0;border-color:#7f8798"></i>folder</span>
+            <span><i style="background:#ffffff;border-color:#aab1bf"></i>file</span>
+            <span><i style="background:#d7e8ff;border-color:#1d6fd6"></i>listed</span>
+            <span><i style="background:#c8f2df;border-color:#0b9a5f"></i>read</span>
+            <span><i style="background:#e8defe;border-color:#7a47f0"></i>hit</span>
+          </div>
+        </div>
+
+        <div class="map-card files-card">
+          <div class="map-head"><span>Files read</span></div>
+          <ul id="src-list" class="src-list"></ul>
+          <p id="src-empty" class="empty">Files the agent opens will be listed here.</p>
+        </div>
+
+        <!-- shown only in the tree stage -->
+        <div id="cta" class="cta">
+          <div class="cta-title"><span class="dot"></span>Repository mapped <span id="cta-stats"></span></div>
+          <p>Ask a question. The map slides to the side and you can watch the agent explore it.</p>
+          <div class="cta-row">
+            <input id="cta-input" type="text" placeholder="Ask anything about this repository…" spellcheck="false">
+            <button id="cta-go" class="primary">Ask →</button>
+          </div>
+          <div class="chips">
+            <button class="chip-btn" data-q="What is the project structure and what does each main folder contain?">Project structure</button>
+            <button class="chip-btn" data-q="How does the main entry point work?">Main entry point</button>
+            <button class="chip-btn" data-q="Where are the tests and how are they organized?">Tests</button>
+            <button class="chip-btn" data-q="How do I set up this project for development?">Dev setup</button>
+          </div>
+        </div>
       </div>
-      <p id="ask-status" class="status"></p>
-    </section>
+    </aside>
 
-    <section class="card" id="result-section" hidden>
-      <h2>Answer</h2>
-      <p id="answered-question" class="question"></p>
-      <div id="answer" class="markdown"></div>
-    </section>
+    <section class="chat">
+      <div id="thread" class="thread">
+        <div id="thread-inner" class="thread-inner">
+          <div id="welcome" class="welcome">
+            <div class="avatar big">◈</div>
+            <h2>Ask anything about <span id="welcome-repo">this repository</span></h2>
+            <p>The agent explores folders, reads files and searches the code. Watch the map on the left to follow it.</p>
+            <div class="chips">
+              <button class="chip-btn" data-q="What is the project structure and what does each main folder contain?">Project structure</button>
+              <button class="chip-btn" data-q="How does the main entry point work?">Main entry point</button>
+              <button class="chip-btn" data-q="Where are the tests and how are they organized?">Tests</button>
+              <button class="chip-btn" data-q="How do I set up this project for development?">Dev setup</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
-    <section class="card" id="findings-section" hidden>
-      <h2>What the agent read</h2>
-      <p class="hint">Click a step to see the exact text the agent saw. Use this to check the answer.</p>
-      <ol id="findings"></ol>
+      <div class="composer-wrap">
+        <div class="composer">
+          <textarea id="question" rows="1" placeholder="Ask anything about this repository…" disabled></textarea>
+          <button id="ask-btn" class="send" aria-label="Send" disabled>↑</button>
+        </div>
+        <p id="ask-status" class="hint"></p>
+      </div>
     </section>
-  </main>
+  </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
   <script src="app.js"></script>

@@ -17,8 +17,14 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
 
     # Grok
-    groq_api_key: str = ""
-    groq_model: str = "openai/gpt-oss-120b"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.5-flash-lite"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
+    workspace_dir: str = ""
+
+
 
 
 settings = Settings()
